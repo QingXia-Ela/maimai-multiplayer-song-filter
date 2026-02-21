@@ -13,6 +13,8 @@ type SongsCacheV1 = {
 const CACHE_KEY = 'maimai:song-list:v1'
 const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000 // 3 天
 
+const API_BASE = 'https://maimai.lxns.net'
+
 function readCache(): SongsCacheV1 | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY)
@@ -56,7 +58,8 @@ function buildQuery(params: SongListRequest) {
 
 async function fetchSongList(params: SongListRequest): Promise<SongListResponse> {
   const query = buildQuery(params)
-  const url = query ? `/api/v0/maimai/song/list?${query}` : `/api/v0/maimai/song/list`
+  const path = '/api/v0/maimai/song/list'
+  const url = query ? `${API_BASE}${path}?${query}` : `${API_BASE}${path}`
 
   const res = await fetch(url, { method: 'GET' })
   if (!res.ok) {
