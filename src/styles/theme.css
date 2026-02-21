@@ -1,0 +1,134 @@
+:root {
+  /* 基础配色（浅色） */
+  color-scheme: light;
+  --c-bg: #ffffff;
+  --c-bg-soft: #fafafa;
+  --c-surface: #ffffff;
+  --c-surface-soft: #fafafa;
+
+  --c-text: #111111;
+  --c-text-subtle: #444444;
+  --c-text-muted: #666666;
+  --c-text-weaker: #888888;
+
+  --c-border: #e6e6e6;
+  --c-border-soft: #eeeeee;
+  --c-border-strong: #dddddd;
+
+  /* 交互/强调（浅色） */
+  --c-primary: #0b57d0;
+  --c-primary-bg: #e8f2ff;
+  --c-primary-bg-hover: #ddebff;
+  --c-primary-border: #bcd6ff;
+
+  --c-btn-bg: #f6f6f6;
+  --c-btn-bg-hover: #f0f0f0;
+
+  --c-input-bg: #ffffff;
+  --c-input-border: var(--c-border-strong);
+
+  --c-focus: rgba(11, 87, 208, 0.45);
+
+  /* 圆角 token（与现有页面一致） */
+  --r-card: 12px;
+  --r-input: 10px;
+  --r-pill: 999px;
+}
+
+/* 系统深色：仅在未手动指定 data-theme 时生效 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+    --c-bg: #0f1115;
+    --c-bg-soft: #131723;
+    --c-surface: #151a23;
+    --c-surface-soft: #101520;
+
+    --c-text: #e9edf5;
+    --c-text-subtle: #cfd6e6;
+    --c-text-muted: #aeb6c5;
+    --c-text-weaker: #8f97a7;
+
+    --c-border: #2a3140;
+    --c-border-soft: #252b39;
+    --c-border-strong: #30384a;
+
+    --c-primary: #8ab4ff;
+    --c-primary-bg: rgba(138, 180, 255, 0.14);
+    --c-primary-bg-hover: rgba(138, 180, 255, 0.2);
+    --c-primary-border: rgba(138, 180, 255, 0.35);
+
+    --c-btn-bg: #1a2030;
+    --c-btn-bg-hover: #20283a;
+
+    --c-input-bg: #121827;
+    --c-input-border: #313a4e;
+
+    --c-focus: rgba(138, 180, 255, 0.55);
+  }
+}
+
+/* 手动深色 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --c-bg: #0f1115;
+  --c-bg-soft: #131723;
+  --c-surface: #151a23;
+  --c-surface-soft: #101520;
+
+  --c-text: #e9edf5;
+  --c-text-subtle: #cfd6e6;
+  --c-text-muted: #aeb6c5;
+  --c-text-weaker: #8f97a7;
+
+  --c-border: #2a3140;
+  --c-border-soft: #252b39;
+  --c-border-strong: #30384a;
+
+  --c-primary: #8ab4ff;
+  --c-primary-bg: rgba(138, 180, 255, 0.14);
+  --c-primary-bg-hover: rgba(138, 180, 255, 0.2);
+  --c-primary-border: rgba(138, 180, 255, 0.35);
+
+  --c-btn-bg: #1a2030;
+  --c-btn-bg-hover: #20283a;
+
+  --c-input-bg: #121827;
+  --c-input-border: #313a4e;
+
+  --c-focus: rgba(138, 180, 255, 0.55);
+}
+
+/* 全局基础样式 */
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+:where(button, input, select, textarea) {
+  font: inherit;
+  color: inherit;
+}
+
+:where(button) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--c-focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--c-primary-bg);
+}
+
