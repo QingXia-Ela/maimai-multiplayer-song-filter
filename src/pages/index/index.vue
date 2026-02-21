@@ -10,6 +10,8 @@ import BaseNumberInput from '@/components/BaseNumberInput.vue'
 const songsStore = useSongsStore()
 const themeStore = useThemeStore()
 
+const PLAYER_SETTINGS_CACHE_KEY = 'maimai:player-settings:v1'
+
 const themeMode = computed<ThemeMode>({
   get: () => themeStore.mode,
   set: (v) => themeStore.setMode(v),
@@ -35,8 +37,9 @@ onMounted(() => {
   // 兜底：确保进入主页时曲目已加载（App.vue 也会触发一次）
   songsStore.loadAllSongs()
   // select 模式下确保初始值能命中 0.5 步进选项（避免下拉框空白）
-  if (!ui.firstManualLevelInput) onSelectChanged(firstPlayer)
-  if (!ui.secondManualLevelInput) onSelectChanged(secondPlayer)
+  if (!ui.firstManualLevelInput) onSelectChanged(firstPlayer, false, { markDirty: false })
+  if (!ui.secondManualLevelInput) onSelectChanged(secondPlayer, false, { markDirty: false })
+  settingsCacheReady = true
 })
 
 const difficultyOptions: { label: string; value: LevelIndex }[] = [
@@ -61,23 +64,67 @@ const ui = reactive({
   secondManualLevelInput: false,
 })
 
-const firstPlayer = reactive<PlayerSettings>({
+const DEFAULT_FIRST_PLAYER: PlayerSettings = {
   name: '玩家 1',
   maxDifficulty: 3,
   minLevelValue: 11,
   maxLevelValue: 13.5,
   expectedLevelValue: 12.5,
-  maxExpectedDelta: 1.5,
-})
+  maxExpectedDelta: 0.5,
+}
 
-const secondPlayer = reactive<PlayerSettings>({
+const DEFAULT_SECOND_PLAYER: PlayerSettings = {
   name: '玩家 2',
   maxDifficulty: 2,
   minLevelValue: 10,
   maxLevelValue: 12.5,
   expectedLevelValue: 11.5,
-  maxExpectedDelta: 1.5,
-})
+  maxExpectedDelta: 0.5,
+}
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
+function safeReadPlayerSettingsCache(): unknown | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(PLAYER_SETTINGS_CACHE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as unknown
+  } catch {
+    return null
+  }
+}
+
+function safeWritePlayerSettingsCache(payload: unknown) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(PLAYER_SETTINGS_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore quota / blocked storage
+  }
+}
+
+function applyPlayerPatch(target: PlayerSettings, patch: Partial<PlayerSettings>) {
+  if (typeof patch.maxDifficulty === 'number') {
+    // 0~4：BASIC/ADVANCED/EXPERT/MASTER/Re:MASTER
+    const v = Math.round(patch.maxDifficulty)
+    target.maxDifficulty = clampToRange(v, 0, 4) as LevelIndex
+  }
+  if (isFiniteNumber(patch.minLevelValue)) target.minLevelValue = patch.minLevelValue
+  if (isFiniteNumber(patch.maxLevelValue)) target.maxLevelValue = patch.maxLevelValue
+  if (isFiniteNumber(patch.expectedLevelValue)) target.expectedLevelValue = patch.expectedLevelValue
+  if (isFiniteNumber(patch.maxExpectedDelta)) target.maxExpectedDelta = patch.maxExpectedDelta
+}
+
+function resetPlayerToDefaults(target: PlayerSettings, defaults: PlayerSettings) {
+  applyPlayerPatch(target, defaults)
+}
+
+const firstPlayer = reactive<PlayerSettings>({ ...DEFAULT_FIRST_PLAYER })
+
+const secondPlayer = reactive<PlayerSettings>({ ...DEFAULT_SECOND_PLAYER })
 
 const sortPrimary = ref<'first' | 'second'>('first')
 
@@ -137,13 +184,20 @@ function onInputChanged() {
   dirty.value = true
 }
 
-function onSelectChanged(p: PlayerSettings) {
-  p.minLevelValue = clampToRange(snapHalf(p.minLevelValue), 1, 15)
-  p.maxLevelValue = clampToRange(snapHalf(p.maxLevelValue), 1, 15)
-  p.expectedLevelValue = clampToRange(snapHalf(p.expectedLevelValue), 1, 15)
-  p.maxExpectedDelta = clampToRange(p.maxExpectedDelta, 0, 15)
+function onSelectChanged(p: PlayerSettings, manual: boolean, options?: { markDirty?: boolean }) {
+  if (!manual) {
+    p.minLevelValue = clampToRange(snapHalf(p.minLevelValue), 1, 15)
+    p.maxLevelValue = clampToRange(snapHalf(p.maxLevelValue), 1, 15)
+    p.expectedLevelValue = clampToRange(snapHalf(p.expectedLevelValue), 1, 15)
+    p.maxExpectedDelta = clampToRange(snapHalf(p.maxExpectedDelta), 0, 15)
+  } else {
+    p.minLevelValue = clampToRange(p.minLevelValue, 1, 15)
+    p.maxLevelValue = clampToRange(p.maxLevelValue, 1, 15)
+    p.expectedLevelValue = clampToRange(p.expectedLevelValue, 1, 15)
+    p.maxExpectedDelta = clampToRange(p.maxExpectedDelta, 0, 15)
+  }
   clampPlayer(p)
-  dirty.value = true
+  if (options?.markDirty ?? true) dirty.value = true
 }
 
 function normalizePlayerBeforeSearch(p: PlayerSettings, manual: boolean) {
@@ -154,7 +208,7 @@ function normalizePlayerBeforeSearch(p: PlayerSettings, manual: boolean) {
     p.maxExpectedDelta = clampToRange(p.maxExpectedDelta, 0, 15)
     clampPlayer(p)
   } else {
-    onSelectChanged(p)
+    onSelectChanged(p, false, { markDirty: false })
   }
 }
 
@@ -172,6 +226,144 @@ function runSearch() {
   page.value = 1
   dirty.value = false
 }
+
+function resetPlayerSettings() {
+  resetPlayerToDefaults(firstPlayer, DEFAULT_FIRST_PLAYER)
+  resetPlayerToDefaults(secondPlayer, DEFAULT_SECOND_PLAYER)
+  // 保持当前“手动输入/下拉选择”的偏好，但需要重新对齐数值
+  onSelectChanged(firstPlayer, ui.firstManualLevelInput, { markDirty: true })
+  onSelectChanged(secondPlayer, ui.secondManualLevelInput, { markDirty: true })
+}
+
+// ---- 读取本地缓存（玩家水平参数）----
+let settingsCacheReady = false
+const cached = safeReadPlayerSettingsCache()
+if (cached && typeof cached === 'object') {
+  const c = cached as any
+  if (c.v === 1) {
+    if (c.ui && typeof c.ui === 'object') {
+      if (typeof c.ui.firstManualLevelInput === 'boolean') ui.firstManualLevelInput = c.ui.firstManualLevelInput
+      if (typeof c.ui.secondManualLevelInput === 'boolean') ui.secondManualLevelInput = c.ui.secondManualLevelInput
+    }
+    if (c.firstPlayer && typeof c.firstPlayer === 'object') applyPlayerPatch(firstPlayer, c.firstPlayer)
+    if (c.secondPlayer && typeof c.secondPlayer === 'object') applyPlayerPatch(secondPlayer, c.secondPlayer)
+    if (c.sortPrimary === 'first' || c.sortPrimary === 'second') sortPrimary.value = c.sortPrimary
+
+    // 缓存可能来自旧版本/手动输入，统一做一次归一化，保证 select 模式不会“选项空白”
+    onSelectChanged(firstPlayer, ui.firstManualLevelInput, { markDirty: false })
+    onSelectChanged(secondPlayer, ui.secondManualLevelInput, { markDirty: false })
+  }
+}
+
+// ---- 联动逻辑：期望定数 ↔ 可接受区间（按阈值）----
+function updateRangeFromExpected(p: PlayerSettings, manual: boolean) {
+  const expected = manual ? clampToRange(p.expectedLevelValue, 1, 15) : clampToRange(snapHalf(p.expectedLevelValue), 1, 15)
+  const delta = manual ? clampToRange(p.maxExpectedDelta, 0, 15) : clampToRange(snapHalf(p.maxExpectedDelta), 0, 15)
+
+  // 先归一化自身字段，避免 drift
+  p.expectedLevelValue = expected
+  p.maxExpectedDelta = delta
+
+  let min = expected - delta
+  let max = expected + delta
+  min = clampToRange(min, 1, 15)
+  max = clampToRange(max, 1, 15)
+  if (!manual) {
+    min = snapHalf(min)
+    max = snapHalf(max)
+  }
+  p.minLevelValue = min
+  p.maxLevelValue = max
+  clampPlayer(p)
+}
+
+function syncExpectedToRangeCenter(p: PlayerSettings, manual: boolean) {
+  const min = p.minLevelValue
+  const max = p.maxLevelValue
+  let expected = (min + max) / 2
+  expected = manual ? clampToRange(expected, 1, 15) : clampToRange(snapHalf(expected), 1, 15)
+  p.expectedLevelValue = expected
+}
+
+function setupPlayerLinkage(p: PlayerSettings, manualGetter: () => boolean) {
+  const guard = reactive({ fromExpected: false, fromRange: false, fromDelta: false })
+
+  watch(
+    () => [p.minLevelValue, p.maxLevelValue] as const,
+    () => {
+      if (guard.fromExpected) return
+      guard.fromRange = true
+      clampPlayer(p)
+      syncExpectedToRangeCenter(p, manualGetter())
+      guard.fromRange = false
+      dirty.value = true
+    }
+  )
+
+  watch(
+    () => p.expectedLevelValue,
+    () => {
+      if (guard.fromRange) return
+      guard.fromExpected = true
+      updateRangeFromExpected(p, manualGetter())
+      guard.fromExpected = false
+      dirty.value = true
+    }
+  )
+
+  watch(
+    () => p.maxExpectedDelta,
+    () => {
+      if (guard.fromRange || guard.fromExpected) return
+      guard.fromDelta = true
+      updateRangeFromExpected(p, manualGetter())
+      guard.fromDelta = false
+      dirty.value = true
+    }
+  )
+
+  // 切换“手动输入/下拉选择”时也要对齐一次（避免 select 选项空白）
+  watch(
+    manualGetter,
+    (manual) => {
+      onSelectChanged(p, manual, { markDirty: true })
+    }
+  )
+}
+
+setupPlayerLinkage(firstPlayer, () => ui.firstManualLevelInput)
+setupPlayerLinkage(secondPlayer, () => ui.secondManualLevelInput)
+
+// ---- 写入本地缓存 ----
+watch(
+  () => ({
+    v: 1,
+    ui: {
+      firstManualLevelInput: ui.firstManualLevelInput,
+      secondManualLevelInput: ui.secondManualLevelInput,
+    },
+    sortPrimary: sortPrimary.value,
+    firstPlayer: {
+      maxDifficulty: firstPlayer.maxDifficulty,
+      minLevelValue: firstPlayer.minLevelValue,
+      maxLevelValue: firstPlayer.maxLevelValue,
+      expectedLevelValue: firstPlayer.expectedLevelValue,
+      maxExpectedDelta: firstPlayer.maxExpectedDelta,
+    },
+    secondPlayer: {
+      maxDifficulty: secondPlayer.maxDifficulty,
+      minLevelValue: secondPlayer.minLevelValue,
+      maxLevelValue: secondPlayer.maxLevelValue,
+      expectedLevelValue: secondPlayer.expectedLevelValue,
+      maxExpectedDelta: secondPlayer.maxExpectedDelta,
+    },
+  }),
+  (payload) => {
+    if (!settingsCacheReady) return
+    safeWritePlayerSettingsCache(payload)
+  },
+  { deep: true }
+)
 </script>
 
 <template>
@@ -220,6 +412,7 @@ function runSearch() {
             { label: '先贴近玩家 2 期望', value: 'second' },
           ]" @change="dirty = true" />
         </label>
+        <button type="button" class="btn" @click="resetPlayerSettings">重置玩家参数</button>
         <button type="button" class="btn btnPrimary" @click="runSearch"
           :disabled="songsStore.loading || songsStore.songs.length === 0">
           开始筛选
@@ -246,7 +439,7 @@ function runSearch() {
             </template>
             <template v-else>
               <BaseSelect v-model="firstPlayer.minLevelValue" class="input inputFlex" :options="levelValueSelectOptions"
-                @change="onSelectChanged(firstPlayer)" />
+                @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
             </template>
             <span class="muted">到</span>
             <template v-if="ui.firstManualLevelInput">
@@ -255,7 +448,7 @@ function runSearch() {
             </template>
             <template v-else>
               <BaseSelect v-model="firstPlayer.maxLevelValue" class="input inputFlex" :options="levelValueSelectOptions"
-                @change="onSelectChanged(firstPlayer)" />
+                @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
             </template>
           </div>
         </div>
@@ -268,7 +461,7 @@ function runSearch() {
           </template>
           <template v-else>
             <BaseSelect v-model="firstPlayer.expectedLevelValue" class="input" :options="levelValueSelectOptions"
-              @change="onSelectChanged(firstPlayer)" />
+              @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
           </template>
         </div>
 
@@ -283,7 +476,8 @@ function runSearch() {
             <div class="formRow">
               <span class="label">手动输入定数</span>
               <label class="row gap">
-                <input v-model="ui.firstManualLevelInput" type="checkbox" @change="onSelectChanged(firstPlayer)" />
+                <input v-model="ui.firstManualLevelInput" type="checkbox"
+                  @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
                 <span class="muted">关闭时使用下拉选择（1~15，每 0.5）</span>
               </label>
             </div>
@@ -309,7 +503,7 @@ function runSearch() {
             </template>
             <template v-else>
               <BaseSelect v-model="secondPlayer.minLevelValue" class="input inputFlex"
-                :options="levelValueSelectOptions" @change="onSelectChanged(secondPlayer)" />
+                :options="levelValueSelectOptions" @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
             </template>
             <span class="muted">到</span>
             <template v-if="ui.secondManualLevelInput">
@@ -318,7 +512,7 @@ function runSearch() {
             </template>
             <template v-else>
               <BaseSelect v-model="secondPlayer.maxLevelValue" class="input inputFlex"
-                :options="levelValueSelectOptions" @change="onSelectChanged(secondPlayer)" />
+                :options="levelValueSelectOptions" @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
             </template>
           </div>
         </div>
@@ -331,7 +525,7 @@ function runSearch() {
           </template>
           <template v-else>
             <BaseSelect v-model="secondPlayer.expectedLevelValue" class="input" :options="levelValueSelectOptions"
-              @change="onSelectChanged(secondPlayer)" />
+              @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
           </template>
         </div>
 
@@ -346,7 +540,8 @@ function runSearch() {
             <div class="formRow">
               <span class="label">手动输入定数</span>
               <label class="row gap">
-                <input v-model="ui.secondManualLevelInput" type="checkbox" @change="onSelectChanged(secondPlayer)" />
+                <input v-model="ui.secondManualLevelInput" type="checkbox"
+                  @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
                 <span class="muted">关闭时使用下拉选择（1~15，每 0.5）</span>
               </label>
             </div>
