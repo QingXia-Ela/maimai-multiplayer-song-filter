@@ -4,13 +4,17 @@ import { useSongsStore, useThemeStore } from '@/store'
 import type { ThemeMode } from '@/store'
 import type { LevelIndex, PlayerSettings } from './utils/songFilter'
 import { filterAndSortSongs } from './utils/songFilter'
+import type { ExtraFiltersState } from './utils/extraFilters'
+import { applyExtraFilters } from './utils/extraFilters'
 import BaseSelect from '@/components/BaseSelect.vue'
 import BaseNumberInput from '@/components/BaseNumberInput.vue'
+import ParamHelp from './components/ParamHelp.vue'
 
 const songsStore = useSongsStore()
 const themeStore = useThemeStore()
 
 const PLAYER_SETTINGS_CACHE_KEY = 'maimai:player-settings:v1'
+const EXTRA_FILTERS_CACHE_KEY = 'maimai:extra-filters:v3'
 
 const themeMode = computed<ThemeMode>({
   get: () => themeStore.mode,
@@ -40,6 +44,7 @@ onMounted(() => {
   if (!ui.firstManualLevelInput) onSelectChanged(firstPlayer, false, { markDirty: false })
   if (!ui.secondManualLevelInput) onSelectChanged(secondPlayer, false, { markDirty: false })
   settingsCacheReady = true
+  extraFiltersCacheReady = true
 })
 
 const difficultyOptions: { label: string; value: LevelIndex }[] = [
@@ -106,6 +111,26 @@ function safeWritePlayerSettingsCache(payload: unknown) {
   }
 }
 
+function safeReadExtraFiltersCache(): unknown | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(EXTRA_FILTERS_CACHE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as unknown
+  } catch {
+    return null
+  }
+}
+
+function safeWriteExtraFiltersCache(payload: unknown) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(EXTRA_FILTERS_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore quota / blocked storage
+  }
+}
+
 function applyPlayerPatch(target: PlayerSettings, patch: Partial<PlayerSettings>) {
   if (typeof patch.maxDifficulty === 'number') {
     // 0~4：BASIC/ADVANCED/EXPERT/MASTER/Re:MASTER
@@ -163,9 +188,7 @@ function goNextPage() {
 function clampPlayer(p: PlayerSettings) {
   // 防止用户把区间输入反了
   if (p.minLevelValue > p.maxLevelValue) {
-    const tmp = p.minLevelValue
-    p.minLevelValue = p.maxLevelValue
-    p.maxLevelValue = tmp
+    p.maxLevelValue = p.minLevelValue
   }
 }
 
@@ -212,12 +235,83 @@ function normalizePlayerBeforeSearch(p: PlayerSettings, manual: boolean) {
   }
 }
 
+function newConditionId() {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  }
+}
+
+const extraFilters = reactive<ExtraFiltersState>({
+  mode: 'include',
+  conditions: [],
+})
+
+let extraFiltersCacheReady = false
+
+const extraModeOptions = [
+  { label: '包含（只保留命中条件的歌曲）', value: 'include' },
+  { label: '不包含（剔除命中条件的歌曲）', value: 'exclude' },
+] as const
+
+const albumSelectOptions = computed(() => {
+  const opts: { label: string; value: string | '' }[] = [{ label: '请选择专辑', value: '' }]
+
+  // 用 songsStore.genres 做展示名映射，但 value 一律取 songs 里的 song.genre，保证能精确匹配
+  const labelMap = new Map<string, string>()
+  for (const g of songsStore.genres ?? []) {
+    if (typeof (g as any)?.title === 'string') labelMap.set((g as any).title, (g as any).title)
+    if (typeof (g as any)?.genre === 'string' && (g as any).genre) {
+      // 有的字段可能是日文/内部名，给个更易读的展示
+      const title = typeof (g as any).title === 'string' && (g as any).title ? (g as any).title : (g as any).genre
+      labelMap.set((g as any).genre, title)
+    }
+  }
+
+  const seen = new Set<string>()
+  for (const s of songsStore.songs ?? []) {
+    if (typeof (s as any)?.genre !== 'string') continue
+    const v = (s as any).genre.trim()
+    if (!v) continue
+    if (seen.has(v)) continue
+    seen.add(v)
+  }
+
+  const values = Array.from(seen).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+  for (const v of values) {
+    opts.push({ label: labelMap.get(v) ?? v, value: v })
+  }
+  return opts
+})
+
+function addAlbumCondition() {
+  extraFilters.conditions.push({
+    id: newConditionId(),
+    kind: 'album',
+    album: '',
+  })
+  dirty.value = true
+}
+
+function removeCondition(id: string) {
+  const idx = extraFilters.conditions.findIndex((c) => c.id === id)
+  if (idx >= 0) extraFilters.conditions.splice(idx, 1)
+  dirty.value = true
+}
+
+function clearExtraConditions() {
+  extraFilters.conditions.splice(0, extraFilters.conditions.length)
+  dirty.value = true
+}
+
 function runSearch() {
   normalizePlayerBeforeSearch(firstPlayer, ui.firstManualLevelInput)
   normalizePlayerBeforeSearch(secondPlayer, ui.secondManualLevelInput)
 
+  const baseSongs = applyExtraFilters(songsStore.songs, extraFilters)
   searchResult.value = filterAndSortSongs({
-    songs: songsStore.songs,
+    songs: baseSongs,
     firstPlayer,
     secondPlayer,
     sortPrimary: sortPrimary.value,
@@ -255,6 +349,25 @@ if (cached && typeof cached === 'object') {
   }
 }
 
+// ---- 读取本地缓存（额外筛选）----
+const cachedExtra = safeReadExtraFiltersCache()
+if (cachedExtra && typeof cachedExtra === 'object') {
+  const c = cachedExtra as any
+  if (c.v === 3) {
+    if (c.mode === 'include' || c.mode === 'exclude') extraFilters.mode = c.mode
+    if (Array.isArray(c.conditions)) {
+      extraFilters.conditions.splice(0, extraFilters.conditions.length)
+      for (const it of c.conditions) {
+        if (!it || typeof it !== 'object') continue
+        if (it.kind !== 'album') continue
+        const id = typeof it.id === 'string' && it.id ? it.id : newConditionId()
+        const album = typeof it.album === 'string' ? it.album : ''
+        extraFilters.conditions.push({ id, kind: 'album', album })
+      }
+    }
+  }
+}
+
 // ---- 联动逻辑：期望定数 ↔ 可接受区间（按阈值）----
 function updateRangeFromExpected(p: PlayerSettings, manual: boolean) {
   const expected = manual ? clampToRange(p.expectedLevelValue, 1, 15) : clampToRange(snapHalf(p.expectedLevelValue), 1, 15)
@@ -264,16 +377,14 @@ function updateRangeFromExpected(p: PlayerSettings, manual: boolean) {
   p.expectedLevelValue = expected
   p.maxExpectedDelta = delta
 
-  let min = expected - delta
-  let max = expected + delta
-  min = clampToRange(min, 1, 15)
-  max = clampToRange(max, 1, 15)
-  if (!manual) {
-    min = snapHalf(min)
-    max = snapHalf(max)
+  // 期望定数在区间内不做任何修改；低于下限则更新下限；高于上限则更新上限
+  // 先兜底修正区间反转，再判断是否需要推动边界
+  clampPlayer(p)
+  if (expected < p.minLevelValue) {
+    p.minLevelValue = expected
+  } else if (expected > p.maxLevelValue) {
+    p.maxLevelValue = expected
   }
-  p.minLevelValue = min
-  p.maxLevelValue = max
   clampPlayer(p)
 }
 
@@ -286,7 +397,7 @@ function syncExpectedToRangeCenter(p: PlayerSettings, manual: boolean) {
 }
 
 function setupPlayerLinkage(p: PlayerSettings, manualGetter: () => boolean) {
-  const guard = reactive({ fromExpected: false, fromRange: false, fromDelta: false })
+  const guard = { fromExpected: false, fromRange: false, fromDelta: false }
 
   watch(
     () => [p.minLevelValue, p.maxLevelValue] as const,
@@ -297,7 +408,8 @@ function setupPlayerLinkage(p: PlayerSettings, manualGetter: () => boolean) {
       syncExpectedToRangeCenter(p, manualGetter())
       guard.fromRange = false
       dirty.value = true
-    }
+    },
+    { flush: 'sync' }
   )
 
   watch(
@@ -308,18 +420,17 @@ function setupPlayerLinkage(p: PlayerSettings, manualGetter: () => boolean) {
       updateRangeFromExpected(p, manualGetter())
       guard.fromExpected = false
       dirty.value = true
-    }
+    },
+    { flush: 'sync' }
   )
 
   watch(
     () => p.maxExpectedDelta,
     () => {
       if (guard.fromRange || guard.fromExpected) return
-      guard.fromDelta = true
-      updateRangeFromExpected(p, manualGetter())
-      guard.fromDelta = false
       dirty.value = true
-    }
+    },
+    { flush: 'sync' }
   )
 
   // 切换“手动输入/下拉选择”时也要对齐一次（避免 select 选项空白）
@@ -364,6 +475,24 @@ watch(
   },
   { deep: true }
 )
+
+watch(
+  () => ({
+    v: 3,
+    mode: extraFilters.mode,
+    conditions: extraFilters.conditions.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      album: c.album,
+    })),
+  }),
+  (payload) => {
+    if (!extraFiltersCacheReady) return
+    safeWriteExtraFiltersCache(payload)
+    dirty.value = true
+  },
+  { deep: true }
+)
 </script>
 
 <template>
@@ -382,6 +511,7 @@ watch(
         <BaseSelect v-model="themeMode" class="input themeSelect" :options="themeOptions" />
       </label>
     </div>
+    <ParamHelp />
   </header>
 
   <section class="panel">
@@ -549,6 +679,38 @@ watch(
         </details>
       </div>
     </div>
+  </section>
+
+  <section class="panel">
+    <div class="panelTitleRow">
+      <h2>额外筛选</h2>
+      <div class="row gap">
+        <label class="row gap">
+          <span class="label">筛选模式</span>
+          <BaseSelect v-model="extraFilters.mode" class="input connectorSelect" :options="extraModeOptions" />
+        </label>
+        <button type="button" class="btn" @click="addAlbumCondition">添加条件</button>
+        <button v-if="extraFilters.conditions.length > 0" type="button" class="btn"
+          @click="clearExtraConditions">清空</button>
+      </div>
+    </div>
+
+    <div v-if="extraFilters.conditions.length === 0" class="empty">
+      暂无条件。点击上方“添加条件”开始配置。
+    </div>
+
+    <ul v-else class="condList">
+      <li v-for="(c, idx) in extraFilters.conditions" :key="c.id" class="condItem">
+        <div class="row gap wrap condRow">
+          <span class="pill condKind">专辑</span>
+          <BaseSelect v-model="c.album" class="input condAlbum" :options="albumSelectOptions" />
+          <button type="button" class="btn" @click="removeCondition(c.id)">移除</button>
+        </div>
+        <!-- <div v-if="idx < extraFilters.conditions.length - 1" class="condJoin muted">或</div> -->
+      </li>
+    </ul>
+
+    <p class="muted tiny">多个条件之间按“或”处理（命中任一条件即生效）。该模块会在“开始筛选”时生效，并自动保存到本地。</p>
   </section>
 
   <section class="panel">
@@ -814,6 +976,42 @@ watch(
   width: 120px;
 }
 
+.connectorSelect {
+  width: 160px;
+}
+
+.condList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.condItem {
+  border: 1px solid var(--c-border-soft);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--c-surface);
+}
+
+.condRow {
+  width: 100%;
+}
+
+.condJoin {
+  padding: 6px 0 0 6px;
+}
+
+.condAlbum {
+  flex: 1;
+  min-width: 220px;
+}
+
+.condKind {
+  flex-shrink: 0;
+}
+
 .rangeRow {
   width: 100%;
 }
@@ -830,6 +1028,14 @@ watch(
 @media (max-width: 900px) {
   .inputNarrow {
     width: 140px;
+  }
+
+  .connectorSelect {
+    width: 140px;
+  }
+
+  .condAlbum {
+    min-width: 0;
   }
 }
 
