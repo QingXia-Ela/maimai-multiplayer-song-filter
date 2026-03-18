@@ -1,26 +1,25 @@
 {
   "name": "maimai-multiplayer-song-filter",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "MaiMai 多人选歌推荐计算器",
+  "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vue-tsc && vite build",
+    "typecheck": "vue-tsc --noEmit"
   },
   "keywords": [],
   "author": "",
   "packageManager": "pnpm@10.28.0",
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^6.2.4",
-    "@tsconfig/svelte": "^5.0.7",
     "@vitejs/plugin-vue": "^6.0.4",
-    "biome": "^0.3.3",
-    "pinia": "^3.0.4",
-    "svelte": "^5.50.0",
+    "typescript": "^5.6.0",
     "vite": "^7.3.1",
-    "vue-router": "^4.6.4"
+    "vue-tsc": "^2.1.0"
   },
   "dependencies": {
-    "vue": "^3.5.28"
+    "pinia": "^3.0.4",
+    "vue": "^3.5.28",
+    "vue-router": "^4.6.4"
   }
 }

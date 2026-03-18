@@ -105,6 +105,12 @@ body {
   height: 100%;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   background: var(--c-bg);
@@ -112,11 +118,16 @@ body {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: 14px;
   line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
 }
 
 :where(button, input, select, textarea) {
   font: inherit;
   color: inherit;
+}
+
+:where(button, input, select, textarea) {
+  touch-action: manipulation;
 }
 
 :where(button) {
@@ -131,4 +142,3 @@ body {
 ::selection {
   background: var(--c-primary-bg);
 }
-

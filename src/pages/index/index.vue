@@ -1,20 +1,18 @@
 <script lang="ts" setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useSongsStore, useThemeStore } from '@/store'
 import type { ThemeMode } from '@/store'
-import type { LevelIndex, PlayerSettings } from './utils/songFilter'
-import { filterAndSortSongs } from './utils/songFilter'
-import type { ExtraFiltersState } from './utils/extraFilters'
-import { applyExtraFilters } from './utils/extraFilters'
-import BaseSelect from '@/components/BaseSelect.vue'
-import BaseNumberInput from '@/components/BaseNumberInput.vue'
-import ParamHelp from './components/ParamHelp.vue'
+import PageHeader from './components/PageHeader.vue'
+import SongSourcePanel from './components/SongSourcePanel.vue'
+import PlayerSettingsPanel from './components/PlayerSettingsPanel.vue'
+import ExtraFiltersPanel from './components/ExtraFiltersPanel.vue'
+import SearchResultPanel from './components/SearchResultPanel.vue'
+import { usePlayerSettings } from './hooks/usePlayerSettings'
+import { useExtraFilters } from './hooks/useExtraFilters'
+import { useSongSearch } from './hooks/useSongSearch'
 
 const songsStore = useSongsStore()
 const themeStore = useThemeStore()
-
-const PLAYER_SETTINGS_CACHE_KEY = 'maimai:player-settings:v1'
-const EXTRA_FILTERS_CACHE_KEY = 'maimai:extra-filters:v3'
 
 const themeMode = computed<ThemeMode>({
   get: () => themeStore.mode,
@@ -37,24 +35,41 @@ const songListMetaText = computed(() => {
   return `数据源：LXNS｜方式：${modeMap[songsStore.source]}｜更新时间：${updatedAt}｜曲目数：${songsStore.songs.length}`
 })
 
-onMounted(() => {
-  // 兜底：确保进入主页时曲目已加载（App.vue 也会触发一次）
-  songsStore.loadAllSongs()
-  // select 模式下确保初始值能命中 0.5 步进选项（避免下拉框空白）
-  if (!ui.firstManualLevelInput) onSelectChanged(firstPlayer, false, { markDirty: false })
-  if (!ui.secondManualLevelInput) onSelectChanged(secondPlayer, false, { markDirty: false })
-  settingsCacheReady = true
-  extraFiltersCacheReady = true
-})
+const dirty = ref(false)
 
-const difficultyOptions: { label: string; value: LevelIndex }[] = [
-  { label: 'BASIC', value: 0 },
-  { label: 'ADVANCED', value: 1 },
-  { label: 'EXPERT', value: 2 },
-  { label: 'MASTER', value: 3 },
-  // 需求里未提，但类型支持；默认不选到这里
-  { label: 'Re:MASTER', value: 4 },
-]
+const {
+  ui,
+  firstPlayer,
+  secondPlayer,
+  sortPrimary,
+  difficultyOptions,
+  onInputChanged,
+  onSelectChanged,
+  normalizePlayerBeforeSearch,
+  resetPlayerSettings: resetPlayers,
+} = usePlayerSettings({ onDirty: () => (dirty.value = true) })
+
+const {
+  extraFilters,
+  extraModeOptions,
+  albumSelectOptions,
+  addAlbumCondition,
+  removeCondition,
+  clearExtraConditions,
+  markCacheReady,
+} = useExtraFilters({ onDirty: () => (dirty.value = true) })
+
+const {
+  hasSearched,
+  searchResult,
+  page,
+  totalPages,
+  pageOptions,
+  pagedMatchedSongs,
+  goPrevPage,
+  goNextPage,
+  runSearch: runSongSearch,
+} = useSongSearch()
 
 const levelValueOptions = computed(() => {
   const arr: number[] = []
@@ -64,771 +79,148 @@ const levelValueOptions = computed(() => {
 
 const levelValueSelectOptions = computed(() => levelValueOptions.value.map((v) => ({ label: String(v), value: v })))
 
-const ui = reactive({
-  firstManualLevelInput: false,
-  secondManualLevelInput: false,
-})
-
-const DEFAULT_FIRST_PLAYER: PlayerSettings = {
-  name: '玩家 1',
-  maxDifficulty: 3,
-  minLevelValue: 11,
-  maxLevelValue: 13.5,
-  expectedLevelValue: 12.5,
-  maxExpectedDelta: 0.5,
-}
-
-const DEFAULT_SECOND_PLAYER: PlayerSettings = {
-  name: '玩家 2',
-  maxDifficulty: 2,
-  minLevelValue: 10,
-  maxLevelValue: 12.5,
-  expectedLevelValue: 11.5,
-  maxExpectedDelta: 0.5,
-}
-
-function isFiniteNumber(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v)
-}
-
-function safeReadPlayerSettingsCache(): unknown | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = localStorage.getItem(PLAYER_SETTINGS_CACHE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as unknown
-  } catch {
-    return null
-  }
-}
-
-function safeWritePlayerSettingsCache(payload: unknown) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(PLAYER_SETTINGS_CACHE_KEY, JSON.stringify(payload))
-  } catch {
-    // ignore quota / blocked storage
-  }
-}
-
-function safeReadExtraFiltersCache(): unknown | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = localStorage.getItem(EXTRA_FILTERS_CACHE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as unknown
-  } catch {
-    return null
-  }
-}
-
-function safeWriteExtraFiltersCache(payload: unknown) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(EXTRA_FILTERS_CACHE_KEY, JSON.stringify(payload))
-  } catch {
-    // ignore quota / blocked storage
-  }
-}
-
-function applyPlayerPatch(target: PlayerSettings, patch: Partial<PlayerSettings>) {
-  if (typeof patch.maxDifficulty === 'number') {
-    // 0~4：BASIC/ADVANCED/EXPERT/MASTER/Re:MASTER
-    const v = Math.round(patch.maxDifficulty)
-    target.maxDifficulty = clampToRange(v, 0, 4) as LevelIndex
-  }
-  if (isFiniteNumber(patch.minLevelValue)) target.minLevelValue = patch.minLevelValue
-  if (isFiniteNumber(patch.maxLevelValue)) target.maxLevelValue = patch.maxLevelValue
-  if (isFiniteNumber(patch.expectedLevelValue)) target.expectedLevelValue = patch.expectedLevelValue
-  if (isFiniteNumber(patch.maxExpectedDelta)) target.maxExpectedDelta = patch.maxExpectedDelta
-}
-
-function resetPlayerToDefaults(target: PlayerSettings, defaults: PlayerSettings) {
-  applyPlayerPatch(target, defaults)
-}
-
-const firstPlayer = reactive<PlayerSettings>({ ...DEFAULT_FIRST_PLAYER })
-
-const secondPlayer = reactive<PlayerSettings>({ ...DEFAULT_SECOND_PLAYER })
-
-const sortPrimary = ref<'first' | 'second'>('first')
-
-type SearchResult = ReturnType<typeof filterAndSortSongs>
-const hasSearched = ref(false)
-const dirty = ref(false)
-const searchResult = ref<SearchResult>({
-  firstPlayerAvaliabeSongs: [],
-  matchedSongs: [],
-})
-
-const pageSize = 30
-const page = ref(1)
-const totalPages = computed(() => {
-  if (!hasSearched.value) return 1
-  return Math.max(1, Math.ceil(searchResult.value.matchedSongs.length / pageSize))
-})
-const pageOptions = computed(() => Array.from({ length: totalPages.value }, (_, i) => i + 1))
-const pagedMatchedSongs = computed(() => {
-  const start = (page.value - 1) * pageSize
-  return searchResult.value.matchedSongs.slice(start, start + pageSize)
-})
-
-watch(totalPages, (tp) => {
-  if (page.value > tp) page.value = tp
-  if (page.value < 1) page.value = 1
-})
-
-function goPrevPage() {
-  if (page.value > 1) page.value -= 1
-}
-function goNextPage() {
-  if (page.value < totalPages.value) page.value += 1
-}
-
-function clampPlayer(p: PlayerSettings) {
-  // 防止用户把区间输入反了
-  if (p.minLevelValue > p.maxLevelValue) {
-    p.maxLevelValue = p.minLevelValue
-  }
-}
-
-function clampToRange(value: number, min: number, max: number) {
-  if (Number.isNaN(value)) return min
-  return Math.min(max, Math.max(min, value))
-}
-
-function snapHalf(value: number) {
-  return Math.round(value * 2) / 2
-}
-
-function onInputChanged() {
-  clampPlayer(firstPlayer)
-  clampPlayer(secondPlayer)
-  dirty.value = true
-}
-
-function onSelectChanged(p: PlayerSettings, manual: boolean, options?: { markDirty?: boolean }) {
-  if (!manual) {
-    p.minLevelValue = clampToRange(snapHalf(p.minLevelValue), 1, 15)
-    p.maxLevelValue = clampToRange(snapHalf(p.maxLevelValue), 1, 15)
-    p.expectedLevelValue = clampToRange(snapHalf(p.expectedLevelValue), 1, 15)
-    p.maxExpectedDelta = clampToRange(snapHalf(p.maxExpectedDelta), 0, 15)
-  } else {
-    p.minLevelValue = clampToRange(p.minLevelValue, 1, 15)
-    p.maxLevelValue = clampToRange(p.maxLevelValue, 1, 15)
-    p.expectedLevelValue = clampToRange(p.expectedLevelValue, 1, 15)
-    p.maxExpectedDelta = clampToRange(p.maxExpectedDelta, 0, 15)
-  }
-  clampPlayer(p)
-  if (options?.markDirty ?? true) dirty.value = true
-}
-
-function normalizePlayerBeforeSearch(p: PlayerSettings, manual: boolean) {
-  if (manual) {
-    p.minLevelValue = clampToRange(p.minLevelValue, 1, 15)
-    p.maxLevelValue = clampToRange(p.maxLevelValue, 1, 15)
-    p.expectedLevelValue = clampToRange(p.expectedLevelValue, 1, 15)
-    p.maxExpectedDelta = clampToRange(p.maxExpectedDelta, 0, 15)
-    clampPlayer(p)
-  } else {
-    onSelectChanged(p, false, { markDirty: false })
-  }
-}
-
-function newConditionId() {
-  try {
-    return crypto.randomUUID()
-  } catch {
-    return `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  }
-}
-
-const extraFilters = reactive<ExtraFiltersState>({
-  mode: 'include',
-  conditions: [],
-})
-
-let extraFiltersCacheReady = false
-
-const extraModeOptions = [
-  { label: '包含（只保留命中条件的歌曲）', value: 'include' },
-  { label: '不包含（剔除命中条件的歌曲）', value: 'exclude' },
-] as const
-
-const albumSelectOptions = computed(() => {
-  const opts: { label: string; value: string | '' }[] = [{ label: '请选择专辑', value: '' }]
-
-  // 用 songsStore.genres 做展示名映射，但 value 一律取 songs 里的 song.genre，保证能精确匹配
-  const labelMap = new Map<string, string>()
-  for (const g of songsStore.genres ?? []) {
-    if (typeof (g as any)?.title === 'string') labelMap.set((g as any).title, (g as any).title)
-    if (typeof (g as any)?.genre === 'string' && (g as any).genre) {
-      // 有的字段可能是日文/内部名，给个更易读的展示
-      const title = typeof (g as any).title === 'string' && (g as any).title ? (g as any).title : (g as any).genre
-      labelMap.set((g as any).genre, title)
-    }
-  }
-
-  const seen = new Set<string>()
-  for (const s of songsStore.songs ?? []) {
-    if (typeof (s as any)?.genre !== 'string') continue
-    const v = (s as any).genre.trim()
-    if (!v) continue
-    if (seen.has(v)) continue
-    seen.add(v)
-  }
-
-  const values = Array.from(seen).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
-  for (const v of values) {
-    opts.push({ label: labelMap.get(v) ?? v, value: v })
-  }
-  return opts
-})
-
-function addAlbumCondition() {
-  extraFilters.conditions.push({
-    id: newConditionId(),
-    kind: 'album',
-    album: '',
-  })
-  dirty.value = true
-}
-
-function removeCondition(id: string) {
-  const idx = extraFilters.conditions.findIndex((c) => c.id === id)
-  if (idx >= 0) extraFilters.conditions.splice(idx, 1)
-  dirty.value = true
-}
-
-function clearExtraConditions() {
-  extraFilters.conditions.splice(0, extraFilters.conditions.length)
-  dirty.value = true
-}
-
 function runSearch() {
-  normalizePlayerBeforeSearch(firstPlayer, ui.firstManualLevelInput)
-  normalizePlayerBeforeSearch(secondPlayer, ui.secondManualLevelInput)
-
-  const baseSongs = applyExtraFilters(songsStore.songs, extraFilters)
-  searchResult.value = filterAndSortSongs({
-    songs: baseSongs,
+  runSongSearch({
     firstPlayer,
     secondPlayer,
     sortPrimary: sortPrimary.value,
+    extraFilters,
+    normalizePlayerBeforeSearch,
+    ui,
   })
-  hasSearched.value = true
-  page.value = 1
   dirty.value = false
 }
 
 function resetPlayerSettings() {
-  resetPlayerToDefaults(firstPlayer, DEFAULT_FIRST_PLAYER)
-  resetPlayerToDefaults(secondPlayer, DEFAULT_SECOND_PLAYER)
-  // 保持当前“手动输入/下拉选择”的偏好，但需要重新对齐数值
-  onSelectChanged(firstPlayer, ui.firstManualLevelInput, { markDirty: true })
-  onSelectChanged(secondPlayer, ui.secondManualLevelInput, { markDirty: true })
+  resetPlayers()
 }
 
-// ---- 读取本地缓存（玩家水平参数）----
-let settingsCacheReady = false
-const cached = safeReadPlayerSettingsCache()
-if (cached && typeof cached === 'object') {
-  const c = cached as any
-  if (c.v === 1) {
-    if (c.ui && typeof c.ui === 'object') {
-      if (typeof c.ui.firstManualLevelInput === 'boolean') ui.firstManualLevelInput = c.ui.firstManualLevelInput
-      if (typeof c.ui.secondManualLevelInput === 'boolean') ui.secondManualLevelInput = c.ui.secondManualLevelInput
-    }
-    if (c.firstPlayer && typeof c.firstPlayer === 'object') applyPlayerPatch(firstPlayer, c.firstPlayer)
-    if (c.secondPlayer && typeof c.secondPlayer === 'object') applyPlayerPatch(secondPlayer, c.secondPlayer)
-    if (c.sortPrimary === 'first' || c.sortPrimary === 'second') sortPrimary.value = c.sortPrimary
-
-    // 缓存可能来自旧版本/手动输入，统一做一次归一化，保证 select 模式不会“选项空白”
-    onSelectChanged(firstPlayer, ui.firstManualLevelInput, { markDirty: false })
-    onSelectChanged(secondPlayer, ui.secondManualLevelInput, { markDirty: false })
-  }
-}
-
-// ---- 读取本地缓存（额外筛选）----
-const cachedExtra = safeReadExtraFiltersCache()
-if (cachedExtra && typeof cachedExtra === 'object') {
-  const c = cachedExtra as any
-  if (c.v === 3) {
-    if (c.mode === 'include' || c.mode === 'exclude') extraFilters.mode = c.mode
-    if (Array.isArray(c.conditions)) {
-      extraFilters.conditions.splice(0, extraFilters.conditions.length)
-      for (const it of c.conditions) {
-        if (!it || typeof it !== 'object') continue
-        if (it.kind !== 'album') continue
-        const id = typeof it.id === 'string' && it.id ? it.id : newConditionId()
-        const album = typeof it.album === 'string' ? it.album : ''
-        extraFilters.conditions.push({ id, kind: 'album', album })
-      }
-    }
-  }
-}
-
-// ---- 联动逻辑：期望定数 ↔ 可接受区间（按阈值）----
-function updateRangeFromExpected(p: PlayerSettings, manual: boolean) {
-  const expected = manual ? clampToRange(p.expectedLevelValue, 1, 15) : clampToRange(snapHalf(p.expectedLevelValue), 1, 15)
-  const delta = manual ? clampToRange(p.maxExpectedDelta, 0, 15) : clampToRange(snapHalf(p.maxExpectedDelta), 0, 15)
-
-  // 先归一化自身字段，避免 drift
-  p.expectedLevelValue = expected
-  p.maxExpectedDelta = delta
-
-  // 期望定数在区间内不做任何修改；低于下限则更新下限；高于上限则更新上限
-  // 先兜底修正区间反转，再判断是否需要推动边界
-  clampPlayer(p)
-  if (expected < p.minLevelValue) {
-    p.minLevelValue = expected
-  } else if (expected > p.maxLevelValue) {
-    p.maxLevelValue = expected
-  }
-  clampPlayer(p)
-}
-
-function syncExpectedToRangeCenter(p: PlayerSettings, manual: boolean) {
-  const min = p.minLevelValue
-  const max = p.maxLevelValue
-  let expected = (min + max) / 2
-  expected = manual ? clampToRange(expected, 1, 15) : clampToRange(snapHalf(expected), 1, 15)
-  p.expectedLevelValue = expected
-}
-
-function setupPlayerLinkage(p: PlayerSettings, manualGetter: () => boolean) {
-  const guard = { fromExpected: false, fromRange: false, fromDelta: false }
-
-  watch(
-    () => [p.minLevelValue, p.maxLevelValue] as const,
-    () => {
-      if (guard.fromExpected) return
-      guard.fromRange = true
-      clampPlayer(p)
-      syncExpectedToRangeCenter(p, manualGetter())
-      guard.fromRange = false
-      dirty.value = true
-    },
-    { flush: 'sync' }
-  )
-
-  watch(
-    () => p.expectedLevelValue,
-    () => {
-      if (guard.fromRange) return
-      guard.fromExpected = true
-      updateRangeFromExpected(p, manualGetter())
-      guard.fromExpected = false
-      dirty.value = true
-    },
-    { flush: 'sync' }
-  )
-
-  watch(
-    () => p.maxExpectedDelta,
-    () => {
-      if (guard.fromRange || guard.fromExpected) return
-      dirty.value = true
-    },
-    { flush: 'sync' }
-  )
-
-  // 切换“手动输入/下拉选择”时也要对齐一次（避免 select 选项空白）
-  watch(
-    manualGetter,
-    (manual) => {
-      onSelectChanged(p, manual, { markDirty: true })
-    }
-  )
-}
-
-setupPlayerLinkage(firstPlayer, () => ui.firstManualLevelInput)
-setupPlayerLinkage(secondPlayer, () => ui.secondManualLevelInput)
-
-// ---- 写入本地缓存 ----
-watch(
-  () => ({
-    v: 1,
-    ui: {
-      firstManualLevelInput: ui.firstManualLevelInput,
-      secondManualLevelInput: ui.secondManualLevelInput,
-    },
-    sortPrimary: sortPrimary.value,
-    firstPlayer: {
-      maxDifficulty: firstPlayer.maxDifficulty,
-      minLevelValue: firstPlayer.minLevelValue,
-      maxLevelValue: firstPlayer.maxLevelValue,
-      expectedLevelValue: firstPlayer.expectedLevelValue,
-      maxExpectedDelta: firstPlayer.maxExpectedDelta,
-    },
-    secondPlayer: {
-      maxDifficulty: secondPlayer.maxDifficulty,
-      minLevelValue: secondPlayer.minLevelValue,
-      maxLevelValue: secondPlayer.maxLevelValue,
-      expectedLevelValue: secondPlayer.expectedLevelValue,
-      maxExpectedDelta: secondPlayer.maxExpectedDelta,
-    },
-  }),
-  (payload) => {
-    if (!settingsCacheReady) return
-    safeWritePlayerSettingsCache(payload)
-  },
-  { deep: true }
-)
-
-watch(
-  () => ({
-    v: 3,
-    mode: extraFilters.mode,
-    conditions: extraFilters.conditions.map((c) => ({
-      id: c.id,
-      kind: c.kind,
-      album: c.album,
-    })),
-  }),
-  (payload) => {
-    if (!extraFiltersCacheReady) return
-    safeWriteExtraFiltersCache(payload)
-    dirty.value = true
-  },
-  { deep: true }
-)
+onMounted(() => {
+  songsStore.loadAllSongs()
+  markCacheReady()
+})
 </script>
 
 <template>
-<div class="page">
-  <header class="header">
-    <div class="headerTop">
-      <div class="headerMain">
-        <h1>MaiMai 选歌器</h1>
-        <p class="sub">
-          输入两位玩家的可接受范围，先筛选出玩家 1 可接受歌曲，再从中筛选玩家 2，最后按“期望定数接近度”排序。
-        </p>
-      </div>
+<div class="indexPage">
+  <PageHeader v-model="themeMode" :options="themeOptions" />
 
-      <label class="row gap headerTheme">
-        <span class="label">主题</span>
-        <BaseSelect v-model="themeMode" class="input themeSelect" :options="themeOptions" />
-      </label>
-    </div>
-    <ParamHelp />
-  </header>
+  <SongSourcePanel
+    :loading="songsStore.loading"
+    :error="songsStore.error"
+    :meta-text="songListMetaText"
+    @reload="songsStore.loadAllSongs({ force: true })"
+  />
 
-  <section class="panel">
-    <div class="panelTitleRow">
-      <h2>歌曲列表来源</h2>
-      <div class="row gap">
-        <button type="button" class="btn" @click="songsStore.loadAllSongs({ force: true })"
-          :disabled="songsStore.loading">
-          重新拉取
-        </button>
-        <span class="muted">
-          <template v-if="songsStore.loading">加载中…</template>
-          <template v-else-if="songsStore.error">请求失败（已尽量使用缓存）：{{ songsStore.error }}</template>
-          <template v-else>{{ songListMetaText }}</template>
-        </span>
-      </div>
-    </div>
-  </section>
+  <PlayerSettingsPanel
+    v-model:sort-primary="sortPrimary"
+    v-model:first-manual-level-input="ui.firstManualLevelInput"
+    v-model:second-manual-level-input="ui.secondManualLevelInput"
+    :first-player="firstPlayer"
+    :second-player="secondPlayer"
+    :difficulty-options="difficultyOptions"
+    :level-value-select-options="levelValueSelectOptions"
+    :on-input-changed="onInputChanged"
+    :on-select-changed="onSelectChanged"
+    :search-disabled="songsStore.loading || songsStore.songs.length === 0"
+    @dirty="dirty = true"
+    @reset="resetPlayerSettings"
+    @search="runSearch"
+  />
 
-  <section class="panel">
-    <div class="panelTitleRow">
-      <h2>玩家设置</h2>
-      <div class="row gap">
-        <label class="row gap">
-          <span class="label">排序优先级</span>
-          <BaseSelect v-model="sortPrimary" class="input" :options="[
-            { label: '先贴近玩家 1 期望', value: 'first' },
-            { label: '先贴近玩家 2 期望', value: 'second' },
-          ]" @change="dirty = true" />
-        </label>
-        <button type="button" class="btn" @click="resetPlayerSettings">重置玩家参数</button>
-        <button type="button" class="btn btnPrimary" @click="runSearch"
-          :disabled="songsStore.loading || songsStore.songs.length === 0">
-          开始筛选
-        </button>
-      </div>
-    </div>
+  <ExtraFiltersPanel
+    :extra-filters="extraFilters"
+    :extra-mode-options="extraModeOptions"
+    :album-select-options="albumSelectOptions"
+    @add="addAlbumCondition"
+    @remove="removeCondition"
+    @clear="clearExtraConditions"
+  />
 
-    <div class="grid2">
-      <div class="card">
-        <h3>{{ firstPlayer.name }}</h3>
-
-        <div class="formRow">
-          <span class="label">最高可接受谱面难度</span>
-          <BaseSelect v-model="firstPlayer.maxDifficulty" class="input" :options="difficultyOptions"
-            @change="onInputChanged" />
-        </div>
-
-        <div class="formRow">
-          <span class="label">可接受定数区间</span>
-          <div class="row gap rangeRow">
-            <template v-if="ui.firstManualLevelInput">
-              <BaseNumberInput v-model="firstPlayer.minLevelValue" class="input inputFlex" :min="1" :max="15" step="0.1"
-                @input="onInputChanged" />
-            </template>
-            <template v-else>
-              <BaseSelect v-model="firstPlayer.minLevelValue" class="input inputFlex" :options="levelValueSelectOptions"
-                @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
-            </template>
-            <span class="muted">到</span>
-            <template v-if="ui.firstManualLevelInput">
-              <BaseNumberInput v-model="firstPlayer.maxLevelValue" class="input inputFlex" :min="1" :max="15" step="0.1"
-                @input="onInputChanged" />
-            </template>
-            <template v-else>
-              <BaseSelect v-model="firstPlayer.maxLevelValue" class="input inputFlex" :options="levelValueSelectOptions"
-                @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
-            </template>
-          </div>
-        </div>
-
-        <div class="formRow">
-          <span class="label">期望定数（排序用）</span>
-          <template v-if="ui.firstManualLevelInput">
-            <BaseNumberInput v-model="firstPlayer.expectedLevelValue" class="input" :min="1" :max="15" step="0.1"
-              @input="onInputChanged" />
-          </template>
-          <template v-else>
-            <BaseSelect v-model="firstPlayer.expectedLevelValue" class="input" :options="levelValueSelectOptions"
-              @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
-          </template>
-        </div>
-
-        <details class="details">
-          <summary class="detailsSummary">高级设置</summary>
-          <div class="detailsBody">
-            <div class="formRow">
-              <span class="label">期望差距阈值</span>
-              <BaseNumberInput v-model="firstPlayer.maxExpectedDelta" class="input inputNarrow" :min="0" :max="15"
-                step="0.1" @input="onInputChanged" />
-            </div>
-            <div class="formRow">
-              <span class="label">手动输入定数</span>
-              <label class="row gap">
-                <input v-model="ui.firstManualLevelInput" type="checkbox"
-                  @change="onSelectChanged(firstPlayer, ui.firstManualLevelInput)" />
-                <span class="muted">关闭时使用下拉选择（1~15，每 0.5）</span>
-              </label>
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <div class="card">
-        <h3>{{ secondPlayer.name }}</h3>
-
-        <div class="formRow">
-          <span class="label">最高可接受谱面难度</span>
-          <BaseSelect v-model="secondPlayer.maxDifficulty" class="input" :options="difficultyOptions"
-            @change="onInputChanged" />
-        </div>
-
-        <div class="formRow">
-          <span class="label">可接受定数区间</span>
-          <div class="row gap rangeRow">
-            <template v-if="ui.secondManualLevelInput">
-              <BaseNumberInput v-model="secondPlayer.minLevelValue" class="input inputFlex" :min="1" :max="15"
-                step="0.1" @input="onInputChanged" />
-            </template>
-            <template v-else>
-              <BaseSelect v-model="secondPlayer.minLevelValue" class="input inputFlex"
-                :options="levelValueSelectOptions" @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
-            </template>
-            <span class="muted">到</span>
-            <template v-if="ui.secondManualLevelInput">
-              <BaseNumberInput v-model="secondPlayer.maxLevelValue" class="input inputFlex" :min="1" :max="15"
-                step="0.1" @input="onInputChanged" />
-            </template>
-            <template v-else>
-              <BaseSelect v-model="secondPlayer.maxLevelValue" class="input inputFlex"
-                :options="levelValueSelectOptions" @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
-            </template>
-          </div>
-        </div>
-
-        <div class="formRow">
-          <span class="label">期望定数（排序用）</span>
-          <template v-if="ui.secondManualLevelInput">
-            <BaseNumberInput v-model="secondPlayer.expectedLevelValue" class="input" :min="1" :max="15" step="0.1"
-              @input="onInputChanged" />
-          </template>
-          <template v-else>
-            <BaseSelect v-model="secondPlayer.expectedLevelValue" class="input" :options="levelValueSelectOptions"
-              @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
-          </template>
-        </div>
-
-        <details class="details">
-          <summary class="detailsSummary">高级设置</summary>
-          <div class="detailsBody">
-            <div class="formRow">
-              <span class="label">期望差距阈值</span>
-              <BaseNumberInput v-model="secondPlayer.maxExpectedDelta" class="input inputNarrow" :min="0" :max="15"
-                step="0.1" @input="onInputChanged" />
-            </div>
-            <div class="formRow">
-              <span class="label">手动输入定数</span>
-              <label class="row gap">
-                <input v-model="ui.secondManualLevelInput" type="checkbox"
-                  @change="onSelectChanged(secondPlayer, ui.secondManualLevelInput)" />
-                <span class="muted">关闭时使用下拉选择（1~15，每 0.5）</span>
-              </label>
-            </div>
-          </div>
-        </details>
-      </div>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panelTitleRow">
-      <h2>额外筛选</h2>
-      <div class="row gap">
-        <label class="row gap">
-          <span class="label">筛选模式</span>
-          <BaseSelect v-model="extraFilters.mode" class="input connectorSelect" :options="extraModeOptions" />
-        </label>
-        <button type="button" class="btn" @click="addAlbumCondition">添加条件</button>
-        <button v-if="extraFilters.conditions.length > 0" type="button" class="btn"
-          @click="clearExtraConditions">清空</button>
-      </div>
-    </div>
-
-    <div v-if="extraFilters.conditions.length === 0" class="empty">
-      暂无条件。点击上方“添加条件”开始配置。
-    </div>
-
-    <ul v-else class="condList">
-      <li v-for="(c, idx) in extraFilters.conditions" :key="c.id" class="condItem">
-        <div class="row gap wrap condRow">
-          <span class="pill condKind">专辑</span>
-          <BaseSelect v-model="c.album" class="input condAlbum" :options="albumSelectOptions" />
-          <button type="button" class="btn" @click="removeCondition(c.id)">移除</button>
-        </div>
-        <!-- <div v-if="idx < extraFilters.conditions.length - 1" class="condJoin muted">或</div> -->
-      </li>
-    </ul>
-
-    <p class="muted tiny">多个条件之间按“或”处理（命中任一条件即生效）。该模块会在“开始筛选”时生效，并自动保存到本地。</p>
-  </section>
-
-  <section class="panel">
-    <div class="panelTitleRow">
-      <h2>筛选结果</h2>
-      <div class="row gap">
-        <template v-if="hasSearched">
-          <span class="muted">玩家 1 可接受：{{ searchResult.firstPlayerAvaliabeSongs.length }}</span>
-          <span class="muted">两人都可接受：{{ searchResult.matchedSongs.length }}</span>
-          <template v-if="searchResult.matchedSongs.length > 0">
-            <span class="muted">第 {{ page }} / {{ totalPages }} 页</span>
-          </template>
-        </template>
-        <template v-else>
-          <span class="muted">尚未开始筛选</span>
-        </template>
-      </div>
-    </div>
-
-    <div v-if="!hasSearched" class="empty">
-      点击上方“开始筛选”生成结果。
-      <span v-if="songsStore.loading" class="muted">（曲目加载中…）</span>
-    </div>
-    <div v-else-if="searchResult.matchedSongs.length === 0" class="empty">
-      暂无符合条件的歌曲（可尝试放宽区间/阈值）。
-    </div>
-
-    <ul v-else class="list">
-      <li v-for="item in pagedMatchedSongs" :key="item.song.id" class="listItem">
-        <div class="titleRow">
-          <span class="title">{{ item.song.title }}</span>
-          <span class="meta">#{{ item.song.id }}｜{{ item.song.genre }}</span>
-        </div>
-        <div class="row wrap gap">
-          <span class="pill">
-            {{ firstPlayer.name }}：{{ item.first.best.level }}（{{ item.first.best.level_value.toFixed(1) }}）
-            Δ{{ item.first.delta.toFixed(1) }}
-          </span>
-          <span class="pill">
-            {{ secondPlayer.name }}：{{ item.second.best.level }}（{{ item.second.best.level_value.toFixed(1) }}）
-            Δ{{ item.second.delta.toFixed(1) }}
-          </span>
-        </div>
-      </li>
-    </ul>
-
-    <p v-if="hasSearched" class="muted tiny">
-      每页展示 30 条结果。<span v-if="dirty">参数已修改，点击“开始筛选”更新结果。</span>
-    </p>
-
-    <div v-if="hasSearched && searchResult.matchedSongs.length > 0" class="pager">
-      <button type="button" class="btn" @click="goPrevPage" :disabled="page <= 1">上一页</button>
-      <div class="row gap">
-        <span class="muted">页码</span>
-        <BaseSelect v-model="page" class="input pagerSelect"
-          :options="pageOptions.map((p) => ({ label: String(p), value: p }))" />
-        <span class="muted">/ {{ totalPages }}</span>
-      </div>
-      <button type="button" class="btn" @click="goNextPage" :disabled="page >= totalPages">下一页</button>
-    </div>
-  </section>
+  <SearchResultPanel
+    v-model:page="page"
+    :has-searched="hasSearched"
+    :loading-songs="songsStore.loading"
+    :dirty="dirty"
+    :total-pages="totalPages"
+    :page-options="pageOptions"
+    :first-player-available-count="searchResult.firstPlayerAvaliabeSongs.length"
+    :matched-count="searchResult.matchedSongs.length"
+    :items="pagedMatchedSongs"
+    :first-player-name="firstPlayer.name"
+    :second-player-name="secondPlayer.name"
+    @prev="goPrevPage"
+    @next="goNextPage"
+  />
 </div>
 </template>
 
-<style scoped>
-.page {
+<style>
+.indexPage {
   max-width: 1100px;
   margin: 0 auto;
   padding: 24px 16px 60px;
   color: var(--c-text);
 }
 
-.headerTop {
+@media (max-width: 600px) {
+  .indexPage {
+    padding: 16px 12px 44px;
+  }
+}
+
+.indexPage .headerTop {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.headerMain {
+.indexPage .headerMain {
   min-width: 0;
 }
 
-.headerTheme {
+.indexPage .headerTheme {
   flex-shrink: 0;
 }
 
-.themeSelect {
+.indexPage .themeSelect {
   flex: 1;
 }
 
 @media (max-width: 900px) {
-  .headerTop {
+  .indexPage .headerTop {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .headerTheme {
+  .indexPage .headerTheme {
     justify-content: space-between;
   }
 
-  .themeSelect {
+  .indexPage .themeSelect {
     width: 100%;
   }
 }
 
-.header h1 {
+.indexPage .header h1 {
   margin: 0 0 8px;
   font-size: 28px;
 }
 
-.sub {
+@media (max-width: 600px) {
+  .indexPage .header h1 {
+    font-size: 24px;
+  }
+}
+
+.indexPage .sub {
   margin: 0;
   color: var(--c-text-muted);
   line-height: 1.6;
 }
 
-.panel {
+.indexPage .panel {
   margin-top: 16px;
   border: 1px solid var(--c-border);
   border-radius: 12px;
@@ -836,7 +228,13 @@ watch(
   background: var(--c-surface);
 }
 
-.panelTitleRow {
+@media (max-width: 600px) {
+  .indexPage .panel {
+    padding: 12px;
+  }
+}
+
+.indexPage .panelTitleRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -844,36 +242,48 @@ watch(
   margin-bottom: 12px;
 }
 
-.panelTitleRow h2 {
+@media (max-width: 600px) {
+  .indexPage .panelTitleRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .indexPage .panelTitleRow .row {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+.indexPage .panelTitleRow h2 {
   margin: 0;
   font-size: 16px;
 }
 
-.grid2 {
+.indexPage .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
 
 @media (max-width: 900px) {
-  .grid2 {
+  .indexPage .grid2 {
     grid-template-columns: 1fr;
   }
 }
 
-.card {
+.indexPage .card {
   border: 1px solid var(--c-border-soft);
   border-radius: 12px;
   padding: 12px;
   background: var(--c-surface-soft);
 }
 
-.card h3 {
+.indexPage .card h3 {
   margin: 0 0 10px;
   font-size: 15px;
 }
 
-.formRow {
+.indexPage .formRow {
   display: grid;
   grid-template-columns: 140px 1fr;
   gap: 10px;
@@ -881,25 +291,33 @@ watch(
   margin-top: 10px;
 }
 
-.row {
+@media (max-width: 600px) {
+  .indexPage .formRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    align-items: flex-start;
+  }
+}
+
+.indexPage .row {
   display: flex;
   align-items: center;
 }
 
-.wrap {
+.indexPage .wrap {
   flex-wrap: wrap;
 }
 
-.gap {
+.indexPage .gap {
   gap: 10px;
 }
 
-.label {
+.indexPage .label {
   color: var(--c-text-subtle);
   font-size: 13px;
 }
 
-.input {
+.indexPage .input {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--c-input-border);
@@ -908,7 +326,14 @@ watch(
   color: var(--c-text);
 }
 
-.btn {
+@media (max-width: 600px) {
+  .indexPage .input {
+    min-height: 40px;
+    padding: 10px 10px;
+  }
+}
+
+.indexPage .btn {
   padding: 8px 12px;
   border: 1px solid var(--c-input-border);
   background: var(--c-btn-bg);
@@ -916,31 +341,38 @@ watch(
   cursor: pointer;
 }
 
-.btn:not(:disabled):hover {
+@media (max-width: 600px) {
+  .indexPage .btn {
+    min-height: 40px;
+    padding: 10px 12px;
+  }
+}
+
+.indexPage .btn:not(:disabled):hover {
   background: var(--c-btn-bg-hover);
 }
 
-.btnPrimary {
+.indexPage .btnPrimary {
   border-color: var(--c-primary-border);
   background: var(--c-primary-bg);
   color: var(--c-primary);
 }
 
-.btnPrimary:not(:disabled):hover {
+.indexPage .btnPrimary:not(:disabled):hover {
   background: var(--c-primary-bg-hover);
 }
 
-.btn:disabled {
+.indexPage .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.muted {
+.indexPage .muted {
   color: var(--c-text-muted);
   font-size: 13px;
 }
 
-.details {
+.indexPage .details {
   margin-top: 12px;
   border: 1px solid var(--c-border-soft);
   border-radius: 12px;
@@ -948,23 +380,23 @@ watch(
   padding: 6px 10px;
 }
 
-.detailsSummary {
+.indexPage .detailsSummary {
   cursor: pointer;
   color: var(--c-text-subtle);
   font-size: 13px;
   user-select: none;
 }
 
-.detailsBody {
+.indexPage .detailsBody {
   padding: 8px 0 2px;
 }
 
-.tiny {
+.indexPage .tiny {
   font-size: 12px;
   margin: 10px 0 0;
 }
 
-.pager {
+.indexPage .pager {
   margin-top: 12px;
   display: flex;
   align-items: center;
@@ -972,15 +404,26 @@ watch(
   gap: 12px;
 }
 
-.pagerSelect {
+@media (max-width: 600px) {
+  .indexPage .pager {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .indexPage .pagerSelect {
+    width: 100%;
+  }
+}
+
+.indexPage .pagerSelect {
   width: 120px;
 }
 
-.connectorSelect {
+.indexPage .connectorSelect {
   width: 160px;
 }
 
-.condList {
+.indexPage .condList {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -988,58 +431,64 @@ watch(
   gap: 10px;
 }
 
-.condItem {
+.indexPage .condItem {
   border: 1px solid var(--c-border-soft);
   border-radius: 12px;
   padding: 10px;
   background: var(--c-surface);
 }
 
-.condRow {
+.indexPage .condRow {
   width: 100%;
 }
 
-.condJoin {
-  padding: 6px 0 0 6px;
-}
-
-.condAlbum {
+.indexPage .condAlbum {
   flex: 1;
   min-width: 220px;
 }
 
-.condKind {
+.indexPage .condKind {
   flex-shrink: 0;
 }
 
-.rangeRow {
+.indexPage .rangeRow {
   width: 100%;
 }
 
-.inputFlex {
+@media (max-width: 420px) {
+  .indexPage .rangeRow {
+    flex-wrap: wrap;
+  }
+
+  .indexPage .inputFlex {
+    flex: 1 1 140px;
+  }
+}
+
+.indexPage .inputFlex {
   flex: 1;
   min-width: 0;
 }
 
-.inputNarrow {
+.indexPage .inputNarrow {
   width: 160px;
 }
 
 @media (max-width: 900px) {
-  .inputNarrow {
+  .indexPage .inputNarrow {
     width: 140px;
   }
 
-  .connectorSelect {
+  .indexPage .connectorSelect {
     width: 140px;
   }
 
-  .condAlbum {
+  .indexPage .condAlbum {
     min-width: 0;
   }
 }
 
-.list {
+.indexPage .list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -1047,14 +496,14 @@ watch(
   gap: 10px;
 }
 
-.listItem {
+.indexPage .listItem {
   border: 1px solid var(--c-border-soft);
   border-radius: 12px;
   padding: 12px;
   background: var(--c-surface);
 }
 
-.titleRow {
+.indexPage .titleRow {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -1062,7 +511,7 @@ watch(
   flex-wrap: wrap;
 }
 
-.title {
+.indexPage .title {
   font-weight: 700;
   color: var(--c-text);
   flex: 1;
@@ -1072,14 +521,22 @@ watch(
   white-space: nowrap;
 }
 
-.meta {
+.indexPage .meta {
   color: var(--c-text-weaker);
   font-size: 12px;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-.pill {
+@media (max-width: 600px) {
+  .indexPage .meta {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.indexPage .pill {
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
@@ -1090,7 +547,7 @@ watch(
   color: var(--c-text-subtle);
 }
 
-.empty {
+.indexPage .empty {
   padding: 14px;
   border: 1px dashed var(--c-input-border);
   border-radius: 12px;
