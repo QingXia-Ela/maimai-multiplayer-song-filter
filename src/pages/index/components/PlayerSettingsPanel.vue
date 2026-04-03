@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import BaseSelect from '@/components/BaseSelect.vue'
 import PlayerCard from './PlayerCard.vue'
-import type { LevelIndex, PlayerSettings } from '../utils/songFilter'
+import type { LevelIndex, LevelValueSource, PlayerSettings } from '../utils/songFilter'
 
 const props = defineProps<{
   sortPrimary: 'first' | 'second'
+  levelValueSource: LevelValueSource
   firstManualLevelInput: boolean
   secondManualLevelInput: boolean
   firstPlayer: PlayerSettings
@@ -18,6 +19,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:sortPrimary', v: 'first' | 'second'): void
+  (e: 'update:levelValueSource', v: LevelValueSource): void
   (e: 'update:firstManualLevelInput', v: boolean): void
   (e: 'update:secondManualLevelInput', v: boolean): void
   (e: 'dirty'): void
@@ -27,6 +29,11 @@ const emit = defineEmits<{
 
 function onSortPrimaryChanged(v: 'first' | 'second') {
   emit('update:sortPrimary', v)
+  emit('dirty')
+}
+
+function onLevelValueSourceChanged(v: LevelValueSource) {
+  emit('update:levelValueSource', v)
   emit('dirty')
 }
 </script>
@@ -46,6 +53,19 @@ function onSortPrimaryChanged(v: 'first' | 'second') {
               { label: '先贴近玩家 2 期望', value: 'second' },
             ]"
             @update:model-value="onSortPrimaryChanged"
+          />
+        </label>
+
+        <label class="row gap">
+          <span class="label">定数来源</span>
+          <BaseSelect
+            class="input"
+            :model-value="props.levelValueSource"
+            :options="[
+              { label: '玩家公投（水鱼）', value: 'fit' },
+              { label: '官方（LXNS）', value: 'official' },
+            ]"
+            @update:model-value="onLevelValueSourceChanged"
           />
         </label>
 

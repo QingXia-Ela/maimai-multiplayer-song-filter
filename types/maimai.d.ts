@@ -150,6 +150,11 @@ declare namespace MaiMai {
           level: string;
           /** 谱面定数 */
           level_value: number;
+          /**
+           * 玩家公投拟合定数（来自 Diving-Fish `chart_stats.fit_diff`）。
+           * 用于在筛选/排序时可选地替代 `level_value`。
+           */
+          fit_level_value?: number;
           /** 谱师 */
           note_designer: string;
           /** 谱面首次出现版本 */

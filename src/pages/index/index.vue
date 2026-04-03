@@ -32,7 +32,7 @@ const songListMetaText = computed(() => {
     network: '网络',
   }
   const updatedAt = songsStore.lastUpdatedAt ? new Date(songsStore.lastUpdatedAt).toLocaleString('zh-CN') : '—'
-  return `数据源：LXNS｜方式：${modeMap[songsStore.source]}｜更新时间：${updatedAt}｜曲目数：${songsStore.songs.length}`
+  return `曲目：LXNS｜公投拟合定数：水鱼查分器 chart_stats｜方式：${modeMap[songsStore.source]}｜更新时间：${updatedAt}｜曲目数：${songsStore.songs.length}`
 })
 
 const dirty = ref(false)
@@ -42,6 +42,7 @@ const {
   firstPlayer,
   secondPlayer,
   sortPrimary,
+  levelValueSource,
   difficultyOptions,
   onInputChanged,
   onSelectChanged,
@@ -84,6 +85,7 @@ function runSearch() {
     firstPlayer,
     secondPlayer,
     sortPrimary: sortPrimary.value,
+    levelValueSource: levelValueSource.value,
     extraFilters,
     normalizePlayerBeforeSearch,
     ui,
@@ -114,6 +116,7 @@ onMounted(() => {
 
   <PlayerSettingsPanel
     v-model:sort-primary="sortPrimary"
+    v-model:level-value-source="levelValueSource"
     v-model:first-manual-level-input="ui.firstManualLevelInput"
     v-model:second-manual-level-input="ui.secondManualLevelInput"
     :first-player="firstPlayer"

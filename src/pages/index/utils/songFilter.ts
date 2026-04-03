@@ -16,6 +16,8 @@ export type PlayerSettings = {
   maxExpectedDelta: number
 }
 
+export type LevelValueSource = 'fit' | 'official'
+
 export type ChartCandidate = {
   type: MaiMai.LXNS.API.Types.SongType
   difficulty: LevelIndex
@@ -35,12 +37,17 @@ export type MatchedSong = {
   second: PlayerMatch
 }
 
-function toCandidates(song: Song): ChartCandidate[] {
+function pickLevelValue(c: SongDifficulty, source: LevelValueSource) {
+  if (source === 'fit') return typeof c.fit_level_value === 'number' ? c.fit_level_value : c.level_value
+  return c.level_value
+}
+
+function toCandidates(song: Song, source: LevelValueSource): ChartCandidate[] {
   const std = song.difficulties.standard.map((c: SongDifficulty) => ({
     type: c.type,
     difficulty: c.difficulty,
     level: c.level,
-    level_value: c.level_value,
+    level_value: pickLevelValue(c, source),
     isUtage: false,
   }))
 
@@ -48,7 +55,7 @@ function toCandidates(song: Song): ChartCandidate[] {
     type: c.type,
     difficulty: c.difficulty,
     level: c.level,
-    level_value: c.level_value,
+    level_value: pickLevelValue(c, source),
     isUtage: false,
   }))
 
@@ -63,8 +70,8 @@ function toCandidates(song: Song): ChartCandidate[] {
   return [...std, ...dx, ...utage]
 }
 
-export function matchSongForPlayer(song: Song, p: PlayerSettings): PlayerMatch | null {
-  const candidates = toCandidates(song).filter((c) => {
+export function matchSongForPlayer(song: Song, p: PlayerSettings, source: LevelValueSource): PlayerMatch | null {
+  const candidates = toCandidates(song, source).filter((c) => {
     if (c.difficulty > p.maxDifficulty) return false
     if (c.level_value < p.minLevelValue) return false
     if (c.level_value > p.maxLevelValue) return false
@@ -97,6 +104,7 @@ export function filterAndSortSongs(options: {
   secondPlayer: PlayerSettings
   /** 排序主优先级：'first' 表示先贴近 firstPlayer；'second' 表示先贴近 secondPlayer */
   sortPrimary: 'first' | 'second'
+  levelValueSource: LevelValueSource
 }): {
   firstPlayerAvaliabeSongs: { song: Song; match: PlayerMatch }[]
   matchedSongs: MatchedSong[]
@@ -104,14 +112,14 @@ export function filterAndSortSongs(options: {
   const firstPlayerAvaliabeSongs: { song: Song; match: PlayerMatch }[] = []
 
   for (const song of options.songs) {
-    const m1 = matchSongForPlayer(song, options.firstPlayer)
+    const m1 = matchSongForPlayer(song, options.firstPlayer, options.levelValueSource)
     if (!m1) continue
     firstPlayerAvaliabeSongs.push({ song, match: m1 })
   }
 
   const matchedSongs: MatchedSong[] = []
   for (const item of firstPlayerAvaliabeSongs) {
-    const m2 = matchSongForPlayer(item.song, options.secondPlayer)
+    const m2 = matchSongForPlayer(item.song, options.secondPlayer, options.levelValueSource)
     if (!m2) continue
     matchedSongs.push({ song: item.song, first: item.match, second: m2 })
   }
@@ -141,4 +149,3 @@ export function filterAndSortSongs(options: {
 
   return { firstPlayerAvaliabeSongs, matchedSongs }
 }
-

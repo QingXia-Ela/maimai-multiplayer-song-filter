@@ -14,6 +14,11 @@ const CACHE_KEY = 'maimai:song-list:v1'
 const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000 // 3 天
 
 const API_BASE = 'https://maimai.lxns.net'
+const DIVING_FISH_API_BASE = 'https://www.diving-fish.com/api/maimaidxprober'
+
+type DivingFishChartStats = {
+  charts: Record<string, Array<{ fit_diff?: number } | null | undefined>>
+}
 
 function readCache(): SongsCacheV1 | null {
   try {
@@ -68,6 +73,47 @@ async function fetchSongList(params: SongListRequest): Promise<SongListResponse>
   return (await res.json()) as SongListResponse
 }
 
+async function fetchChartStats(): Promise<DivingFishChartStats> {
+  const url = `${DIVING_FISH_API_BASE}/chart_stats`
+  const res = await fetch(url, { method: 'GET' })
+  if (!res.ok) {
+    throw new Error(`chart_stats failed: ${res.status} ${res.statusText}`)
+  }
+  return (await res.json()) as DivingFishChartStats
+}
+
+function attachFitLevelValue(songs: SongListResponse['songs'], stats: DivingFishChartStats) {
+  for (const song of songs) {
+    const songId = song.id
+
+    for (const d of song.difficulties.standard) {
+      const key = String(songId)
+      const entry = stats.charts[key]
+      const v = entry?.[d.difficulty]?.fit_diff
+      if (typeof v === 'number') d.fit_level_value = v
+    }
+
+    for (const d of song.difficulties.dx) {
+      const key = String(songId + 10000)
+      const entry = stats.charts[key]
+      const v = entry?.[d.difficulty]?.fit_diff
+      if (typeof v === 'number') d.fit_level_value = v
+    }
+  }
+}
+
+function hasAnyFitLevelValue(songs: SongListResponse['songs']) {
+  for (const song of songs) {
+    for (const d of song.difficulties.standard) {
+      if (typeof d.fit_level_value === 'number') return true
+    }
+    for (const d of song.difficulties.dx) {
+      if (typeof d.fit_level_value === 'number') return true
+    }
+  }
+  return false
+}
+
 let pending: Promise<void> | null = null
 
 export const useSongsStore = defineStore('songs', {
@@ -109,6 +155,26 @@ export const useSongsStore = defineStore('songs', {
       if (!force && !this.initialized && cacheFresh) {
         this.hydrateFromCache(cache as SongsCacheV1)
         this.initialized = true
+
+        if (!hasAnyFitLevelValue(this.songs)) {
+          try {
+            const stats = await fetchChartStats()
+            attachFitLevelValue(this.songs, stats)
+            this.lastUpdatedAt = Date.now()
+            writeCache({
+              v: 1,
+              cachedAt: this.lastUpdatedAt,
+              params: this.params,
+              data: {
+                songs: this.songs,
+                genres: this.genres,
+                versions: this.versions,
+              },
+            })
+          } catch {
+            // ignore
+          }
+        }
         return
       }
 
@@ -125,6 +191,14 @@ export const useSongsStore = defineStore('songs', {
       pending = (async () => {
         try {
           const data = await fetchSongList(this.params)
+
+          try {
+            const stats = await fetchChartStats()
+            attachFitLevelValue(data.songs, stats)
+          } catch {
+            // ignore
+          }
+
           this.songs = data.songs
           this.genres = data.genres
           this.versions = data.versions
@@ -140,6 +214,27 @@ export const useSongsStore = defineStore('songs', {
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
           this.error = msg
+
+          if (hasCache && !hasAnyFitLevelValue(this.songs)) {
+            try {
+              const stats = await fetchChartStats()
+              attachFitLevelValue(this.songs, stats)
+              this.lastUpdatedAt = Date.now()
+              writeCache({
+                v: 1,
+                cachedAt: this.lastUpdatedAt,
+                params: this.params,
+                data: {
+                  songs: this.songs,
+                  genres: this.genres,
+                  versions: this.versions,
+                },
+              })
+            } catch {
+              // ignore
+            }
+          }
+
           // 离线/请求失败：如果之前已成功 hydrate 过缓存，就继续用缓存结果
           if (!hasCache) {
             this.source = 'empty'
@@ -162,4 +257,3 @@ export const useSongsStore = defineStore('songs', {
     },
   },
 })
-

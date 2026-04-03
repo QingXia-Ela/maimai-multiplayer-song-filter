@@ -1,5 +1,5 @@
 import { reactive, ref, watch, onMounted } from 'vue'
-import type { LevelIndex, PlayerSettings } from '../utils/songFilter'
+import type { LevelIndex, LevelValueSource, PlayerSettings } from '../utils/songFilter'
 import { safeReadStorage, safeWriteStorage } from '@/utils/storage'
 
 const PLAYER_SETTINGS_CACHE_KEY = 'maimai:player-settings:v1'
@@ -64,6 +64,7 @@ type PlayerSettingsCacheV1 = {
   v: 1
   ui: { firstManualLevelInput: boolean; secondManualLevelInput: boolean }
   sortPrimary: 'first' | 'second'
+  levelValueSource?: LevelValueSource
   firstPlayer: Partial<PlayerSettings>
   secondPlayer: Partial<PlayerSettings>
 }
@@ -80,6 +81,7 @@ export function usePlayerSettings(options: { onDirty?: () => void } = {}) {
   const secondPlayer = reactive<PlayerSettings>({ ...DEFAULT_SECOND_PLAYER })
 
   const sortPrimary = ref<'first' | 'second'>('first')
+  const levelValueSource = ref<LevelValueSource>('fit')
   let cacheReady = false
 
   function onInputChanged() {
@@ -199,6 +201,7 @@ export function usePlayerSettings(options: { onDirty?: () => void } = {}) {
     if (cached.firstPlayer && typeof cached.firstPlayer === 'object') applyPlayerPatch(firstPlayer, cached.firstPlayer)
     if (cached.secondPlayer && typeof cached.secondPlayer === 'object') applyPlayerPatch(secondPlayer, cached.secondPlayer)
     if (cached.sortPrimary === 'first' || cached.sortPrimary === 'second') sortPrimary.value = cached.sortPrimary
+    if (cached.levelValueSource === 'fit' || cached.levelValueSource === 'official') levelValueSource.value = cached.levelValueSource
   }
 
   watch(
@@ -209,6 +212,7 @@ export function usePlayerSettings(options: { onDirty?: () => void } = {}) {
         secondManualLevelInput: ui.secondManualLevelInput,
       },
       sortPrimary: sortPrimary.value,
+      levelValueSource: levelValueSource.value,
       firstPlayer: {
         maxDifficulty: firstPlayer.maxDifficulty,
         minLevelValue: firstPlayer.minLevelValue,
@@ -242,6 +246,7 @@ export function usePlayerSettings(options: { onDirty?: () => void } = {}) {
     firstPlayer,
     secondPlayer,
     sortPrimary,
+    levelValueSource,
     difficultyOptions,
     onInputChanged,
     onSelectChanged,

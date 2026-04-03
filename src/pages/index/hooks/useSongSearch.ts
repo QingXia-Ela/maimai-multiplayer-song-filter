@@ -2,7 +2,7 @@ import { ref, computed, watch } from 'vue'
 import { useSongsStore } from '@/store'
 import { filterAndSortSongs } from '../utils/songFilter'
 import { applyExtraFilters } from '../utils/extraFilters'
-import type { PlayerSettings } from '../utils/songFilter'
+import type { LevelValueSource, PlayerSettings } from '../utils/songFilter'
 import type { ExtraFiltersState } from '../utils/extraFilters'
 
 const PAGE_SIZE = 30
@@ -47,11 +47,12 @@ export function useSongSearch() {
     firstPlayer: PlayerSettings
     secondPlayer: PlayerSettings
     sortPrimary: 'first' | 'second'
+    levelValueSource: LevelValueSource
     extraFilters: ExtraFiltersState
     normalizePlayerBeforeSearch: (p: PlayerSettings, manual: boolean) => void
     ui: { firstManualLevelInput: boolean; secondManualLevelInput: boolean }
   }) {
-    const { firstPlayer, secondPlayer, sortPrimary, extraFilters, normalizePlayerBeforeSearch, ui } = options
+    const { firstPlayer, secondPlayer, sortPrimary, levelValueSource, extraFilters, normalizePlayerBeforeSearch, ui } = options
 
     normalizePlayerBeforeSearch(firstPlayer, ui.firstManualLevelInput)
     normalizePlayerBeforeSearch(secondPlayer, ui.secondManualLevelInput)
@@ -62,6 +63,7 @@ export function useSongSearch() {
       firstPlayer,
       secondPlayer,
       sortPrimary,
+      levelValueSource,
     })
 
     hasSearched.value = true
