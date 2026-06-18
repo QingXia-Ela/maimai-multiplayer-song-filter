@@ -22,6 +22,21 @@ pnpm dev
 pnpm build
 ```
 
+### 验证 PWA
+
+Service Worker 只在生产构建中启用。本地验证安装与离线能力：
+
+```bash
+pnpm build
+pnpm preview
+```
+
+更新 `assets/pwa-icon-source.png` 后，可重新生成各平台图标：
+
+```bash
+pnpm generate:pwa-assets
+```
+
 ## 鸣谢
 
 歌曲列表数据源：https://maimai.lxns.net/
