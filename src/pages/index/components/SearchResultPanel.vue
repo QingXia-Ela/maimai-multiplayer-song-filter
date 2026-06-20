@@ -2,6 +2,7 @@
 import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import BaseSelect from '@/components/BaseSelect.vue'
 import SongCover from './SongCover.vue'
+import SongTitleInfo from './SongTitleInfo.vue'
 import type { MatchedSong, Song } from '../utils/songFilter'
 
 const props = defineProps<{
@@ -198,7 +199,7 @@ onBeforeUnmount(() => {
           <SongCover :song-id="item.song.id" :title="item.song.title" />
           <div class="songInfo">
             <div class="titleRow">
-              <span class="title">{{ item.song.title }}</span>
+              <SongTitleInfo class="resultSongTitle" :song-id="item.song.id" :title="item.song.title" />
               <div class="songActions">
                 <span class="meta">#{{ item.song.id }}｜{{ item.song.genre }}</span>
                 <button type="button" class="chartSearchBtn" @click="openChartSearch(item.song.title)">
@@ -258,7 +259,7 @@ onBeforeUnmount(() => {
       <li v-for="song in props.dislikedSongs" :key="song.id" class="dislikedItem">
         <SongCover :song-id="song.id" :title="song.title" />
         <div class="dislikedInfo">
-          <strong>{{ song.title }}</strong>
+          <SongTitleInfo :song-id="song.id" :title="song.title" compact />
           <span class="meta">#{{ song.id }}｜{{ song.genre }}</span>
         </div>
         <button type="button" class="btn" @click="emit('restore', song.id)">恢复</button>
@@ -289,7 +290,7 @@ onBeforeUnmount(() => {
           <SongCover v-if="!drawRunning" :song-id="item.song.id" :title="item.song.title" />
           <div v-else class="drawCoverPlaceholder" aria-hidden="true"></div>
           <div class="drawSongInfo">
-            <strong>{{ item.song.title }}</strong>
+            <SongTitleInfo :song-id="item.song.id" :title="item.song.title" compact />
             <span class="meta">#{{ item.song.id }}｜{{ item.song.genre }}</span>
             <span class="drawChartInfo">
               {{ props.firstPlayerName }} {{ item.first.best.level }}｜公投 {{ formatFitDiff(item.first) }}
@@ -389,6 +390,11 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.resultSongTitle {
+  min-width: 0;
+  flex: 1;
+}
+
 .songActions {
   justify-content: flex-end;
 }
@@ -478,13 +484,6 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: grid;
   gap: 3px;
-}
-
-.dislikedInfo strong,
-.drawSongInfo strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .dialogBackdrop {
