@@ -78,6 +78,21 @@ export default defineConfig({
               },
             },
           },
+          {
+            urlPattern: /^https:\/\/(?:assets2\.lxns\.net\/maimai\/jacket|www\.diving-fish\.com\/covers)\//i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'maimai-song-covers',
+              expiration: {
+                maxEntries: 1500,
+                maxAgeSeconds: 90 * 24 * 60 * 60,
+                purgeOnQuotaError: true,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
         ],
       },
     }),

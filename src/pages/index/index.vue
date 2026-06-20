@@ -10,6 +10,7 @@ import SearchResultPanel from './components/SearchResultPanel.vue'
 import { usePlayerSettings } from './hooks/usePlayerSettings'
 import { useExtraFilters } from './hooks/useExtraFilters'
 import { useSongSearch } from './hooks/useSongSearch'
+import { useDislikedSongs } from './hooks/useDislikedSongs'
 
 const songsStore = useSongsStore()
 const themeStore = useThemeStore()
@@ -70,7 +71,9 @@ const {
   goPrevPage,
   goNextPage,
   runSearch: runSongSearch,
+  removeSong,
 } = useSongSearch()
+const { dislikedSongs, dislikeSong, restoreSong } = useDislikedSongs()
 
 const levelValueOptions = computed(() => {
   const arr: number[] = []
@@ -95,6 +98,16 @@ function runSearch() {
 
 function resetPlayerSettings() {
   resetPlayers()
+}
+
+function onDislikeSong(songId: number) {
+  dislikeSong(songId)
+  removeSong(songId)
+}
+
+function onRestoreSong(songId: number) {
+  restoreSong(songId)
+  if (hasSearched.value) runSearch()
 }
 
 onMounted(() => {
@@ -150,10 +163,14 @@ onMounted(() => {
     :first-player-available-count="searchResult.firstPlayerAvaliabeSongs.length"
     :matched-count="searchResult.matchedSongs.length"
     :items="pagedMatchedSongs"
+    :all-items="searchResult.matchedSongs"
+    :disliked-songs="dislikedSongs"
     :first-player-name="firstPlayer.name"
     :second-player-name="secondPlayer.name"
     @prev="goPrevPage"
     @next="goNextPage"
+    @dislike="onDislikeSong"
+    @restore="onRestoreSong"
   />
 </div>
 </template>

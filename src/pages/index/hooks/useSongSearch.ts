@@ -4,11 +4,13 @@ import { filterAndSortSongs } from '../utils/songFilter'
 import { applyExtraFilters } from '../utils/extraFilters'
 import type { LevelValueSource, PlayerSettings } from '../utils/songFilter'
 import type { ExtraFiltersState } from '../utils/extraFilters'
+import { useDislikedSongs } from './useDislikedSongs'
 
 const PAGE_SIZE = 30
 
 export function useSongSearch() {
   const songsStore = useSongsStore()
+  const { dislikedSongIds } = useDislikedSongs()
 
   const hasSearched = ref(false)
   const searchResult = ref<ReturnType<typeof filterAndSortSongs>>({
@@ -57,7 +59,8 @@ export function useSongSearch() {
     normalizePlayerBeforeSearch(firstPlayer, ui.firstManualLevelInput)
     normalizePlayerBeforeSearch(secondPlayer, ui.secondManualLevelInput)
 
-    const baseSongs = applyExtraFilters(songsStore.songs, extraFilters)
+    const allowedSongs = songsStore.songs.filter((song) => !dislikedSongIds.has(song.id))
+    const baseSongs = applyExtraFilters(allowedSongs, extraFilters)
     searchResult.value = filterAndSortSongs({
       songs: baseSongs,
       firstPlayer,
@@ -70,6 +73,15 @@ export function useSongSearch() {
     page.value = 1
   }
 
+  function removeSong(songId: number) {
+    searchResult.value = {
+      firstPlayerAvaliabeSongs: searchResult.value.firstPlayerAvaliabeSongs.filter(
+        (item) => item.song.id !== songId,
+      ),
+      matchedSongs: searchResult.value.matchedSongs.filter((item) => item.song.id !== songId),
+    }
+  }
+
   return {
     hasSearched,
     searchResult,
@@ -80,5 +92,6 @@ export function useSongSearch() {
     goPrevPage,
     goNextPage,
     runSearch,
+    removeSong,
   }
 }

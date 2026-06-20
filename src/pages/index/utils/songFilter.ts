@@ -23,6 +23,8 @@ export type ChartCandidate = {
   difficulty: LevelIndex
   level: string
   level_value: number
+  official_level_value: number
+  fit_level_value?: number
   isUtage: boolean
 }
 
@@ -48,6 +50,8 @@ function toCandidates(song: Song, source: LevelValueSource): ChartCandidate[] {
     difficulty: c.difficulty,
     level: c.level,
     level_value: pickLevelValue(c, source),
+    official_level_value: c.level_value,
+    fit_level_value: c.fit_level_value,
     isUtage: false,
   }))
 
@@ -56,6 +60,8 @@ function toCandidates(song: Song, source: LevelValueSource): ChartCandidate[] {
     difficulty: c.difficulty,
     level: c.level,
     level_value: pickLevelValue(c, source),
+    official_level_value: c.level_value,
+    fit_level_value: c.fit_level_value,
     isUtage: false,
   }))
 
@@ -64,6 +70,7 @@ function toCandidates(song: Song, source: LevelValueSource): ChartCandidate[] {
     difficulty: c.difficulty,
     level: c.level,
     level_value: c.level_value,
+    official_level_value: c.level_value,
     isUtage: true,
   }))
 

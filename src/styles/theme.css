@@ -28,6 +28,7 @@
   --c-input-border: var(--c-border-strong);
 
   --c-focus: rgba(11, 87, 208, 0.45);
+  --c-dialog-backdrop: rgba(15, 17, 21, 0.56);
 
   /* 圆角 token（与现有页面一致） */
   --r-card: 12px;
@@ -65,6 +66,7 @@
     --c-input-border: #313a4e;
 
     --c-focus: rgba(138, 180, 255, 0.55);
+    --c-dialog-backdrop: rgba(5, 7, 11, 0.72);
   }
 }
 
@@ -97,6 +99,7 @@
   --c-input-border: #313a4e;
 
   --c-focus: rgba(138, 180, 255, 0.55);
+  --c-dialog-backdrop: rgba(5, 7, 11, 0.72);
 }
 
 /* 全局基础样式 */
